@@ -10,6 +10,99 @@ import (
 	// bencode "github.com/jackpal/bencode-go" // Available if you need it!
 )
 
+type FileInfo struct {
+	TrackerURL  string
+	Length      int
+	InfoHash    string
+	PieceLength int
+	PieceHashes []string
+}
+
+func (f *FileInfo) Print() {
+	fmt.Printf("Tracker URL: %s\n", f.TrackerURL)
+	fmt.Printf("Length: %d\n", f.Length)
+	fmt.Printf("Info Hash: %x\n", f.InfoHash)
+	fmt.Printf("Piece Length: %d\n", f.PieceLength)
+	fmt.Println("Piece Hashes:")
+	for _, piece := range f.PieceHashes {
+		fmt.Printf("%x\n", piece)
+	}
+}
+
+func NewFileInfo(data *OrderedMap) (*FileInfo, error) {
+	fileInfo := FileInfo{}
+	announce, _ := data.Get("announce")
+	info, _ := data.Get("info")
+	fileInfo.TrackerURL = announce.(string)
+	if info, ok := info.(*OrderedMap); ok {
+		length, _ := info.Get("length")
+		fileInfo.Length = length.(int)
+	}
+
+	infoBytes, err := bencode(info)
+	if err != nil {
+		return nil, err
+	}
+	h := sha1.New()
+	h.Write(infoBytes)
+	fileInfo.InfoHash = string(h.Sum(nil))
+	if info, ok := info.(*OrderedMap); ok {
+		length, _ := info.Get("piece length")
+		fileInfo.PieceLength = length.(int)
+		pieceHashes, _ := info.Get("pieces")
+		pieceHashesStr, _ := pieceHashes.(string)
+		if len(pieceHashesStr)%20 != 0 {
+			return nil, fmt.Errorf("hash length is not multiple of 20")
+		}
+		fileInfo.PieceHashes = make([]string, 0)
+		for i := 0; i < len(pieceHashesStr); i += 20 {
+			fileInfo.PieceHashes = append(fileInfo.PieceHashes, pieceHashesStr[i:i+20])
+		}
+	}
+	return &fileInfo, nil
+}
+
+func main() {
+	switch os.Args[1] {
+	case "decode":
+		bencodedValue := os.Args[2]
+		decoded, err := decodeBencode(bytes.NewReader([]byte(bencodedValue)))
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		var jsonOutput []byte
+		if mapData, ok := decoded.(*OrderedMap); ok {
+			jsonOutput, _ = json.Marshal(mapData.GetMap())
+		} else {
+			jsonOutput, _ = json.Marshal(decoded)
+		}
+		fmt.Println(string(jsonOutput))
+	case "info":
+		fileContent, err := os.ReadFile(os.Args[2])
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		data, err := decodeBencode(bytes.NewReader(fileContent))
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		if data, ok := data.(*OrderedMap); ok {
+			fileInfo, err := NewFileInfo(data)
+			if err != nil {
+				fmt.Println(err)
+				return
+			}
+			fileInfo.Print()
+		}
+	default:
+		fmt.Println("Unknown command: " + os.Args[1])
+		os.Exit(1)
+	}
+}
+
 func bencode(data any) ([]byte, error) {
 	encoded := make([]byte, 0)
 	var err error
@@ -116,75 +209,4 @@ func readSliceSize(reader *bytes.Reader, size int) ([]byte, error) {
 		res = append(res, c)
 	}
 	return res, nil
-}
-
-func main() {
-	command := os.Args[1]
-
-	if command == "decode" {
-		bencodedValue := os.Args[2]
-
-		decoded, err := decodeBencode(bytes.NewReader([]byte(bencodedValue)))
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-		var jsonOutput []byte
-		if mapData, ok := decoded.(*OrderedMap); ok {
-			jsonOutput, _ = json.Marshal(mapData.GetMap())
-		} else {
-			jsonOutput, _ = json.Marshal(decoded)
-		}
-		fmt.Println(string(jsonOutput))
-	} else if command == "info" {
-		fileContent, err := os.ReadFile(os.Args[2])
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-		data, err := decodeBencode(bytes.NewReader(fileContent))
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-		if data, ok := data.(*OrderedMap); ok {
-			announce, _ := data.Get("announce")
-			info, _ := data.Get("info")
-			fmt.Printf("Tracker URL: %s\n", announce)
-			if info, ok := info.(*OrderedMap); ok {
-				length, _ := info.Get("length")
-				fmt.Printf("Length: %d\n", length)
-			}
-			infoBytes, err := bencode(info)
-			if err != nil {
-				fmt.Println(err)
-				return
-			}
-			h := sha1.New()
-			h.Write(infoBytes)
-			bs := h.Sum(nil)
-			fmt.Printf("Info Hash: %x\n", bs)
-			if info, ok := info.(*OrderedMap); ok {
-				length, _ := info.Get("piece length")
-				fmt.Printf("Piece Length: %d\n", length)
-				pieceHashes, _ := info.Get("pieces")
-				pieceHashesStr, _ := pieceHashes.(string)
-				if len(pieceHashesStr)%20 != 0 {
-					fmt.Println("hash length is not multiple of 20")
-					return
-				}
-				fmt.Println("Piece Hashes:")
-				for i := 0; i < len(pieceHashesStr); i += 20 {
-          fmt.Printf("%x\n", pieceHashesStr[i:i+20])
-				}
-			}
-
-		} else {
-			fmt.Println("not ok")
-		}
-
-	} else {
-		fmt.Println("Unknown command: " + command)
-		os.Exit(1)
-	}
 }
