@@ -1,8 +1,6 @@
 package main
 
 import (
-	// Uncomment this line to pass the first stage
-
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -26,20 +24,37 @@ func decodeBencode(reader *bytes.Reader) (interface{}, error) {
 		number, err := strconv.Atoi(string(value))
 		return number, err
 	case c == 'l':
-	  data := make([]any, 0)
-    for {
-      cur, _ := reader.ReadByte()
-      if cur == 'e' {
-        break
-      }
-      reader.UnreadByte()
-      value, _ := decodeBencode(reader)
-      data = append(data, value)
-    }
-    return data, nil
-
+		data := make([]any, 0)
+		for {
+			cur, _ := reader.ReadByte()
+			if cur == 'e' {
+				break
+			}
+			reader.UnreadByte()
+			value, _ := decodeBencode(reader)
+			data = append(data, value)
+		}
+		return data, nil
+	case c == 'd':
+		data := make(map[string]any)
+		for {
+			cur, _ := reader.ReadByte()
+			if cur == 'e' {
+				break
+			}
+			reader.UnreadByte()
+			key, _ := decodeBencode(reader)
+			value, _ := decodeBencode(reader)
+			if keyStr, ok := key.(string); ok {
+				data[keyStr] = value
+				// Type assertion succeeded, and strValue is now of type string
+			} else {
+				return "", fmt.Errorf("not a valid key %v", key)
+			}
+		}
+		return data, nil
 	default:
-		return "", fmt.Errorf("unexpected character", c)
+		return "", fmt.Errorf("unexpected character %v", c)
 	}
 }
 
