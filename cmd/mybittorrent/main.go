@@ -14,6 +14,7 @@ import (
 // Example:
 // - 5:hello -> hello
 // - 10:hello12345 -> hello12345
+// - i52e -> 52
 func decodeBencode(bencodedString string) (interface{}, error) {
 	if unicode.IsDigit(rune(bencodedString[0])) {
 
@@ -28,9 +29,18 @@ func decodeBencode(bencodedString string) (interface{}, error) {
 		}
 
 		return valueStr[:length], nil
+	} else if bencodedString[0] == 'i' {
+    // integer parsing
+    // find the end
+    i := strings.Index(bencodedString, "e")
+    value, err := strconv.Atoi(bencodedString[1:i])
+    if err != nil {
+      return 0, err
+    }
+    return value, nil
 	} else {
-		return "", fmt.Errorf("only strings are supported at the moment")
-	}
+    return "", fmt.Errorf("not supported yet")
+  }
 }
 
 func main() {
