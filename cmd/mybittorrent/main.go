@@ -5,6 +5,10 @@ import (
 	"crypto/sha1"
 	"encoding/json"
 	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	// bencode "github.com/jackpal/bencode-go" // Available if you need it!
@@ -16,9 +20,10 @@ type FileInfo struct {
 	InfoHash    string
 	PieceLength int
 	PieceHashes []string
+	Peers       []string
 }
 
-func (f *FileInfo) Print() {
+func (f *FileInfo) Info() {
 	fmt.Printf("Tracker URL: %s\n", f.TrackerURL)
 	fmt.Printf("Length: %d\n", f.Length)
 	fmt.Printf("Info Hash: %x\n", f.InfoHash)
@@ -26,6 +31,36 @@ func (f *FileInfo) Print() {
 	fmt.Println("Piece Hashes:")
 	for _, piece := range f.PieceHashes {
 		fmt.Printf("%x\n", piece)
+	}
+}
+
+func (f *FileInfo) GetPeers() {
+	// send GET request and print the peers
+	params := url.Values{}
+	params.Add("info_hash", f.InfoHash)
+	params.Add("peer_id", "00112233445566778899")
+	params.Add("port", "6881")
+	params.Add("uploaded", "0")
+	params.Add("downloaded", "0")
+	params.Add("left", strconv.Itoa(f.Length))
+	params.Add("compact", "1")
+
+	fullURL := fmt.Sprintf("%s?%s", f.TrackerURL, params.Encode())
+	resp, err := http.Get(fullURL)
+	must(err)
+	defer resp.Body.Close()
+	body := make([]byte, 1024)
+	size, _ := resp.Body.Read(body)
+	decoded, err := decodeBencode(bytes.NewReader(body[:size]))
+  must(err)
+	if m, ok := decoded.(*OrderedMap); ok {
+		peers, _ := m.Get("peers")
+		if peers, ok := peers.(string); ok {
+			for i := 0; i < len(peers); i += 6 {
+				ip, port, _ := parseBytesToIPv4AndPort([]byte(peers[i : i+6]))
+				fmt.Printf("%+v:%d\n", ip, port)
+			}
+		}
 	}
 }
 
@@ -67,10 +102,7 @@ func main() {
 	case "decode":
 		bencodedValue := os.Args[2]
 		decoded, err := decodeBencode(bytes.NewReader([]byte(bencodedValue)))
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
+		must(err)
 		var jsonOutput []byte
 		if mapData, ok := decoded.(*OrderedMap); ok {
 			jsonOutput, _ = json.Marshal(mapData.GetMap())
@@ -80,25 +112,41 @@ func main() {
 		fmt.Println(string(jsonOutput))
 	case "info":
 		fileContent, err := os.ReadFile(os.Args[2])
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
+		must(err)
 		data, err := decodeBencode(bytes.NewReader(fileContent))
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
+		must(err)
 		if data, ok := data.(*OrderedMap); ok {
 			fileInfo, err := NewFileInfo(data)
-			if err != nil {
-				fmt.Println(err)
-				return
-			}
-			fileInfo.Print()
+			must(err)
+			fileInfo.Info()
+		}
+	case "peers":
+		fileContent, err := os.ReadFile(os.Args[2])
+		must(err)
+		data, err := decodeBencode(bytes.NewReader(fileContent))
+		must(err)
+		if data, ok := data.(*OrderedMap); ok {
+			fileInfo, err := NewFileInfo(data)
+			must(err)
+			fileInfo.GetPeers()
 		}
 	default:
 		fmt.Println("Unknown command: " + os.Args[1])
+		data := []byte{100, 56, 58, 99, 111, 109, 112, 108, 101, 116, 101, 105, 50, 101, 49, 48, 58, 100, 111, 119, 110, 108, 111, 97, 100, 101, 100, 105, 49, 101, 49, 48, 58, 105, 110, 99, 111, 109, 112, 108, 101, 116, 101, 105, 49, 101, 56, 58, 105, 110, 116, 101, 114, 118, 97, 108, 105, 49, 57, 50, 49, 101, 49, 50, 58, 109, 105, 110, 32, 105, 110, 116, 101, 114, 118, 97, 108, 105, 57, 54, 48, 101, 53, 58, 112, 101, 101, 114, 115, 49, 56, 58, 188, 119, 61, 177, 26, 225, 185, 107, 13, 235, 213, 14, 88, 99, 2, 101, 26, 225, 101}
+		fmt.Println("size", len(data))
+		decoded, err := decodeBencode(bytes.NewReader(data))
+		must(err)
+		if m, ok := decoded.(*OrderedMap); ok {
+			peers, _ := m.Get("peers")
+			fmt.Printf("type %T\n", peers)
+			if peers, ok := peers.(string); ok {
+				for i := 0; i < len(peers); i += 6 {
+					ip, port, _ := parseBytesToIPv4AndPort([]byte(peers[i : i+6]))
+					fmt.Printf("peer %+v\n", peers[i:i+6])
+					fmt.Printf("ip %+v, port %d\n", ip, port)
+				}
+			}
+		}
 		os.Exit(1)
 	}
 }
@@ -209,4 +257,22 @@ func readSliceSize(reader *bytes.Reader, size int) ([]byte, error) {
 		res = append(res, c)
 	}
 	return res, nil
+}
+
+func must(err error) {
+	if err != nil {
+		fmt.Println(err)
+		log.Fatalln(err)
+	}
+}
+
+func parseBytesToIPv4AndPort(data []byte) (string, int, error) {
+	if len(data) != 6 {
+		return "", 0, fmt.Errorf("input data must be exactly 6 bytes")
+	}
+
+	ip := net.IP(data[:4])
+	port := int(data[4])<<8 + int(data[5])
+
+	return ip.String(), port, nil
 }
