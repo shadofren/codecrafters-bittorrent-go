@@ -129,7 +129,7 @@ func main() {
 			fmt.Println(err)
 			return
 		}
-    var jsonOutput []byte
+		var jsonOutput []byte
 		if mapData, ok := decoded.(*OrderedMap); ok {
 			jsonOutput, _ = json.Marshal(mapData.GetMap())
 		} else {
@@ -154,9 +154,6 @@ func main() {
 			if info, ok := info.(*OrderedMap); ok {
 				length, _ := info.Get("length")
 				fmt.Printf("Length: %d\n", length)
-				/* for k := range info { */
-				/*   fmt.Printf("key %s\n", k) */
-				/* } */
 			}
 			infoBytes, err := bencode(info)
 			if err != nil {
@@ -167,6 +164,20 @@ func main() {
 			h.Write(infoBytes)
 			bs := h.Sum(nil)
 			fmt.Printf("Info Hash: %x\n", bs)
+			if info, ok := info.(*OrderedMap); ok {
+				length, _ := info.Get("piece length")
+				fmt.Printf("Piece Length: %d\n", length)
+				pieceHashes, _ := info.Get("pieces")
+				pieceHashesStr, _ := pieceHashes.(string)
+				if len(pieceHashesStr)%20 != 0 {
+					fmt.Println("hash length is not multiple of 20")
+					return
+				}
+				fmt.Println("Piece Hashes:")
+				for i := 0; i < len(pieceHashesStr); i += 20 {
+          fmt.Printf("%x\n", pieceHashesStr[i:i+20])
+				}
+			}
 
 		} else {
 			fmt.Println("not ok")
