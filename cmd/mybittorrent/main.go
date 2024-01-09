@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/sha1"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -26,6 +27,14 @@ type FileInfo struct {
 type TrackerResponse struct {
 	Interval int
 	Peers    string
+}
+
+type Handshake struct {
+	Length     uint8
+	BitTorrent [19]byte
+	Reserved   [8]byte
+	InfoHash   [20]byte
+	PeerId     [20]byte
 }
 
 func (f *FileInfo) Info() {
@@ -146,6 +155,42 @@ func main() {
 			must(err)
 			fileInfo.GetPeers()
 		}
+	case "handshake":
+
+		fileContent, err := os.ReadFile(os.Args[2])
+		must(err)
+		data, err := decodeBencode(bytes.NewReader(fileContent))
+		must(err)
+		if data, ok := data.(*OrderedMap); ok {
+			fileInfo, err := NewFileInfo(data)
+			must(err)
+			bitTorrent := [19]byte{}
+			copy(bitTorrent[:], []byte("BitTorrent protocol"))
+			info, peerId := [20]byte{}, [20]byte{}
+			copy(info[:], []byte(fileInfo.InfoHash))
+			copy(peerId[:], []byte("00112233445566778899"))
+
+			handshake := Handshake{
+				Length:     19,
+				BitTorrent: bitTorrent,
+				Reserved:   [8]byte{},
+				InfoHash:   info,
+				PeerId:     peerId,
+			}
+			peer := os.Args[3]
+			conn, err := net.Dial("tcp", peer)
+			must(err)
+			defer conn.Close()
+			_, err = conn.Write(packHandShake(&handshake))
+			must(err)
+			buffer := make([]byte, 1024)
+			n, err := conn.Read(buffer)
+			must(err)
+			response := buffer[:n]
+			resp := unpackHandShake(response)
+			fmt.Printf("Peer ID: %x\n", resp.PeerId)
+		}
+
 	default:
 		fmt.Println("Unknown command: " + os.Args[1])
 		data := []byte{100, 56, 58, 99, 111, 109, 112, 108, 101, 116, 101, 105, 50, 101, 49, 48, 58, 100, 111, 119, 110, 108, 111, 97, 100, 101, 100, 105, 49, 101, 49, 48, 58, 105, 110, 99, 111, 109, 112, 108, 101, 116, 101, 105, 49, 101, 56, 58, 105, 110, 116, 101, 114, 118, 97, 108, 105, 49, 57, 50, 49, 101, 49, 50, 58, 109, 105, 110, 32, 105, 110, 116, 101, 114, 118, 97, 108, 105, 57, 54, 48, 101, 53, 58, 112, 101, 101, 114, 115, 49, 56, 58, 188, 119, 61, 177, 26, 225, 185, 107, 13, 235, 213, 14, 88, 99, 2, 101, 26, 225, 101}
@@ -291,4 +336,26 @@ func parseBytesToIPv4AndPort(data []byte) (string, int, error) {
 	port := int(data[4])<<8 + int(data[5])
 
 	return ip.String(), port, nil
+}
+
+func packHandShake(hs *Handshake) []byte {
+	var buf bytes.Buffer
+	binary.Write(&buf, binary.BigEndian, hs.Length)
+	binary.Write(&buf, binary.BigEndian, hs.BitTorrent)
+	binary.Write(&buf, binary.BigEndian, hs.Reserved)
+	binary.Write(&buf, binary.BigEndian, hs.InfoHash)
+	binary.Write(&buf, binary.BigEndian, hs.PeerId)
+	return buf.Bytes()
+}
+
+func unpackHandShake(data []byte) *Handshake {
+	reader := bytes.NewReader(data)
+	var hs Handshake
+
+	binary.Read(reader, binary.BigEndian, &hs.Length)
+	binary.Read(reader, binary.BigEndian, &hs.BitTorrent)
+	binary.Read(reader, binary.BigEndian, &hs.Reserved)
+	binary.Read(reader, binary.BigEndian, &hs.InfoHash)
+	binary.Read(reader, binary.BigEndian, &hs.PeerId)
+	return &hs
 }
