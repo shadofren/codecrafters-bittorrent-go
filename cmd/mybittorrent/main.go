@@ -23,6 +23,11 @@ type FileInfo struct {
 	Peers       []string
 }
 
+type TrackerResponse struct {
+	Interval int
+	Peers    string
+}
+
 func (f *FileInfo) Info() {
 	fmt.Printf("Tracker URL: %s\n", f.TrackerURL)
 	fmt.Printf("Length: %d\n", f.Length)
@@ -52,16 +57,27 @@ func (f *FileInfo) GetPeers() {
 	body := make([]byte, 1024)
 	size, _ := resp.Body.Read(body)
 	decoded, err := decodeBencode(bytes.NewReader(body[:size]))
-  must(err)
-	if m, ok := decoded.(*OrderedMap); ok {
-		peers, _ := m.Get("peers")
-		if peers, ok := peers.(string); ok {
-			for i := 0; i < len(peers); i += 6 {
-				ip, port, _ := parseBytesToIPv4AndPort([]byte(peers[i : i+6]))
-				fmt.Printf("%+v:%d\n", ip, port)
-			}
+	must(err)
+	if decoded, ok := decoded.(*OrderedMap); ok {
+		tracker := NewTrackerResponse(decoded)
+		for i := 0; i < len(tracker.Peers); i += 6 {
+			ip, port, _ := parseBytesToIPv4AndPort([]byte(tracker.Peers[i : i+6]))
+			fmt.Printf("%s:%d\n", ip, port)
 		}
 	}
+}
+
+func NewTrackerResponse(data *OrderedMap) *TrackerResponse {
+	interval, _ := data.Get("interval")
+	peers, _ := data.Get("peers")
+	response := TrackerResponse{}
+	if peers, ok := peers.(string); ok {
+		response.Peers = peers
+	}
+	if interval, ok := interval.(int); ok {
+		response.Interval = interval
+	}
+	return &response
 }
 
 func NewFileInfo(data *OrderedMap) (*FileInfo, error) {
