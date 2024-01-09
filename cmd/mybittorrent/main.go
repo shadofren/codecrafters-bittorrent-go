@@ -2,45 +2,66 @@ package main
 
 import (
 	// Uncomment this line to pass the first stage
+
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
-	"unicode"
 	// bencode "github.com/jackpal/bencode-go" // Available if you need it!
 )
 
-// Example:
-// - 5:hello -> hello
-// - 10:hello12345 -> hello12345
-// - i52e -> 52
-func decodeBencode(bencodedString string) (interface{}, error) {
-	if unicode.IsDigit(rune(bencodedString[0])) {
+func decodeBencode(reader *bytes.Reader) (interface{}, error) {
+	c, _ := reader.ReadByte()
 
-		lengthStr, valueStr, found := strings.Cut(bencodedString, ":")
-		if !found {
-			return "", fmt.Errorf("not valid bencoded string")
-		}
-
-		length, err := strconv.Atoi(lengthStr)
-		if err != nil {
-			return "", err
-		}
-
-		return valueStr[:length], nil
-	} else if bencodedString[0] == 'i' {
-    // integer parsing
-    // find the end
-    i := strings.Index(bencodedString, "e")
-    value, err := strconv.Atoi(bencodedString[1:i])
-    if err != nil {
-      return 0, err
+	switch {
+	case '0' <= c && c <= '9':
+		reader.UnreadByte()
+		lengthBytes, _ := readSlice(reader, ':')
+		length, _ := strconv.Atoi(string(lengthBytes))
+		value, err := readSliceSize(reader, length)
+		return string(value), err
+	case c == 'i':
+		value, _ := readSlice(reader, 'e')
+		number, err := strconv.Atoi(string(value))
+		return number, err
+	case c == 'l':
+	  data := make([]any, 0)
+    for {
+      cur, _ := reader.ReadByte()
+      if cur == 'e' {
+        break
+      }
+      reader.UnreadByte()
+      value, _ := decodeBencode(reader)
+      data = append(data, value)
     }
-    return value, nil
-	} else {
-    return "", fmt.Errorf("not supported yet")
-  }
+    return data, nil
+
+	default:
+		return "", fmt.Errorf("unexpected character", c)
+	}
+}
+
+func readSlice(reader *bytes.Reader, delim byte) ([]byte, error) {
+	res := make([]byte, 0)
+	for {
+		c, _ := reader.ReadByte()
+		if c == delim {
+			break
+		}
+		res = append(res, c)
+	}
+	return res, nil
+}
+
+func readSliceSize(reader *bytes.Reader, size int) ([]byte, error) {
+	res := make([]byte, 0)
+	for i := 0; i < size; i++ {
+		c, _ := reader.ReadByte()
+		res = append(res, c)
+	}
+	return res, nil
 }
 
 func main() {
@@ -49,7 +70,7 @@ func main() {
 	if command == "decode" {
 		bencodedValue := os.Args[2]
 
-		decoded, err := decodeBencode(bencodedValue)
+		decoded, err := decodeBencode(bytes.NewReader([]byte(bencodedValue)))
 		if err != nil {
 			fmt.Println(err)
 			return
