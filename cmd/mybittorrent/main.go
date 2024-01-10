@@ -83,7 +83,8 @@ func (f *FileInfo) GetPeers() {
 		tracker := NewTrackerResponse(decoded)
 		for i := 0; i < len(tracker.Peers); i += 6 {
 			ip, port, _ := parseBytesToIPv4AndPort([]byte(tracker.Peers[i : i+6]))
-			fmt.Printf("%s:%d\n", ip, port)
+			peer := fmt.Sprintf("%s:%d\n", ip, port)
+			f.Peers = append(f.Peers, peer)
 		}
 	}
 }
@@ -153,10 +154,18 @@ func main() {
 	case "peers":
 		fileInfo := readTorrentFile(os.Args[2])
 		fileInfo.GetPeers()
+		for _, peer := range fileInfo.Peers {
+			fmt.Println(peer)
+		}
 	case "handshake":
 		fileInfo := readTorrentFile(os.Args[2])
-    resp := sendHandshake(os.Args[3], fileInfo)
-    fmt.Printf("Peer ID: %x\n", resp.PeerId)
+		resp := sendHandshake(os.Args[3], fileInfo)
+		fmt.Printf("Peer ID: %x\n", resp.PeerId)
+	case "download_piece":
+		fileInfo := readTorrentFile(os.Args[2])
+		fileInfo.GetPeers()
+		resp := sendHandshake(fileInfo.Peers[0], fileInfo)
+    fmt.Printf("sending download_piece to peer %s, response %v\n", fileInfo.Peers[0], resp)
 	default:
 		fmt.Println("Unknown command: " + os.Args[1])
 		os.Exit(1)
