@@ -214,13 +214,20 @@ func NewTrackerResponse(data *OrderedMap) *TrackerResponse {
 	return &response
 }
 
-func DownloadPiece(conn net.Conn, output string, fileInfo *FileInfo, pieceId int) {
+// TODO: pipelining the download by sending multiple request at a time
+func DownloadPiece(output string, fileInfo *FileInfo, pieceId int) {
+	peer := fileInfo.Peers[0]
+	conn, err := net.Dial("tcp", peer)
+	must(err)
+	defer conn.Close()
+	// need to send handshake for each download piece
+	_ = SendHandShake(conn, fileInfo)
 	if pieceId >= len(fileInfo.PieceHashes) {
+		fmt.Println("return wrong pieceId")
 		return
 	}
-
 	// bitfield message
-	_, err := readMessage(conn)
+	_, err = readMessage(conn)
 	must(err)
 	// send interest message
 	err = writeMessage(conn, &PeerMessage{Type: Interested, Payload: []byte{}})
@@ -251,3 +258,23 @@ func DownloadPiece(conn net.Conn, output string, fileInfo *FileInfo, pieceId int
 	}
 }
 
+func Download(output string, fileInfo *FileInfo) {
+
+	for i := 0; i < len(fileInfo.PieceHashes); i++ {
+    file, err := os.OpenFile(output, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+		must(err)
+		piece := fmt.Sprintf("%s-piece-%d", output, i)
+		DownloadPiece(piece, fileInfo, i)
+		VerifyHash(piece, fileInfo.PieceHashes[i])
+		content, err := os.ReadFile(piece)
+		must(err)
+		file.Write(content)
+    // clean up the piece
+		os.Remove(piece)
+    file.Close()
+	}
+}
+
+func VerifyHash(filename string, hash string) {
+
+}

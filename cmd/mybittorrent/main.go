@@ -45,17 +45,19 @@ func main() {
 		output, torrent, pieceIdStr := os.Args[3], os.Args[4], os.Args[5]
 		fileInfo := ReadTorrentFile(torrent)
 		fileInfo.GetPeers()
-		peer := fileInfo.Peers[0]
-		conn, err := net.Dial("tcp", peer)
-		must(err)
-		defer conn.Close()
-		_ = SendHandShake(conn, fileInfo)
 		pieceId, err := strconv.Atoi(pieceIdStr)
 		must(err)
-		DownloadPiece(conn, output, fileInfo, pieceId)
+		DownloadPiece(output, fileInfo, pieceId)
+    fmt.Printf("Piece %d downloaded to %s.\n", pieceId, output)
+	case "download":
+		output, torrent := os.Args[3], os.Args[4]
+		fileInfo := ReadTorrentFile(torrent)
+		fileInfo.GetPeers()
+    _ = output
+    Download(output, fileInfo)
+    fmt.Printf("Downloaded %s to %s.\n", torrent, output)
 	default:
 		fmt.Println("Unknown command: " + os.Args[1])
 		os.Exit(1)
 	}
 }
-
