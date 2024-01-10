@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"os"
 	"strconv"
+	"sync"
+	"time"
 )
 
 const (
@@ -215,8 +217,8 @@ func NewTrackerResponse(data *OrderedMap) *TrackerResponse {
 }
 
 // TODO: pipelining the download by sending multiple request at a time
-func DownloadPiece(output string, fileInfo *FileInfo, pieceId int) {
-	peer := fileInfo.Peers[0]
+func DownloadPiece(output string, fileInfo *FileInfo, peerId, pieceId int) {
+	peer := fileInfo.Peers[peerId]
 	conn, err := net.Dial("tcp", peer)
 	must(err)
 	defer conn.Close()
@@ -226,6 +228,7 @@ func DownloadPiece(output string, fileInfo *FileInfo, pieceId int) {
 		fmt.Println("return wrong pieceId")
 		return
 	}
+  fmt.Printf("downloading piece %d with peer %s", pieceId, peer)
 	// bitfield message
 	_, err = readMessage(conn)
 	must(err)
@@ -256,23 +259,58 @@ func DownloadPiece(output string, fileInfo *FileInfo, pieceId int) {
 		_, err = file.Write(data)
 		must(err)
 	}
+  fmt.Println("done piece", pieceId)
 }
 
 func Download(output string, fileInfo *FileInfo) {
+	startTime := time.Now()
+	var wg sync.WaitGroup
+	pieceCount := len(fileInfo.PieceHashes)
+	peerCount := len(fileInfo.Peers)
 
-	for i := 0; i < len(fileInfo.PieceHashes); i++ {
-    file, err := os.OpenFile(output, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
-		must(err)
+  // this is the job queue
+  jobs := make(chan Job, pieceCount)
+  pieces := make([]string, pieceCount)
+
+  // start the worker
+  for i := 0; i < peerCount; i++ {
+    wg.Add(1)
+    go downloadAsync(fileInfo, i, jobs, &wg)
+  }
+
+	for i := 0; i < pieceCount; i++ {
 		piece := fmt.Sprintf("%s-piece-%d", output, i)
-		DownloadPiece(piece, fileInfo, i)
-		VerifyHash(piece, fileInfo.PieceHashes[i])
-		content, err := os.ReadFile(piece)
-		must(err)
-		file.Write(content)
-    // clean up the piece
-		os.Remove(piece)
-    file.Close()
+    jobs <- Job{ID: i, Output: piece}
+    pieces[i] = piece
 	}
+
+  // close so that the range loop in worker will exit
+  close(jobs)
+	wg.Wait()
+
+	f, err := os.OpenFile(output, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+	must(err)
+	defer f.Close()
+	for _, piece := range pieces {
+    content, err := os.ReadFile(piece)
+    must(err)
+    f.Write(content)
+	}
+
+	elapsedTime := time.Since(startTime)
+	fmt.Printf("Time taken: %s\n", elapsedTime)
+}
+
+type Job struct {
+  ID int
+  Output string
+}
+
+func downloadAsync(fileInfo *FileInfo, peerId int, jobs <-chan Job, wg *sync.WaitGroup) {
+	defer wg.Done()
+  for job := range jobs {
+    DownloadPiece(job.Output, fileInfo, peerId, job.ID)
+  }
 }
 
 func VerifyHash(filename string, hash string) {

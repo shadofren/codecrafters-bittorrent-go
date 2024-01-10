@@ -47,7 +47,8 @@ func main() {
 		fileInfo.GetPeers()
 		pieceId, err := strconv.Atoi(pieceIdStr)
 		must(err)
-		DownloadPiece(output, fileInfo, pieceId)
+    peerId := 0
+		DownloadPiece(output, fileInfo, peerId, pieceId)
     fmt.Printf("Piece %d downloaded to %s.\n", pieceId, output)
 	case "download":
 		output, torrent := os.Args[3], os.Args[4]
