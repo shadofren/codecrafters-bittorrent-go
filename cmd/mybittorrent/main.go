@@ -15,6 +15,18 @@ import (
 	// bencode "github.com/jackpal/bencode-go" // Available if you need it!
 )
 
+const (
+	Choke = iota
+	Unchoke
+	Interested
+	NotInterested
+	Have
+	Bitfield
+	Request
+	Piece
+	Cancel
+)
+
 type FileInfo struct {
 	TrackerURL  string
 	Length      int
@@ -136,80 +148,60 @@ func main() {
 		}
 		fmt.Println(string(jsonOutput))
 	case "info":
-		fileContent, err := os.ReadFile(os.Args[2])
-		must(err)
-		data, err := decodeBencode(bytes.NewReader(fileContent))
-		must(err)
-		if data, ok := data.(*OrderedMap); ok {
-			fileInfo, err := NewFileInfo(data)
-			must(err)
-			fileInfo.Info()
-		}
+		fileInfo := readTorrentFile(os.Args[2])
+		fileInfo.Info()
 	case "peers":
-		fileContent, err := os.ReadFile(os.Args[2])
-		must(err)
-		data, err := decodeBencode(bytes.NewReader(fileContent))
-		must(err)
-		if data, ok := data.(*OrderedMap); ok {
-			fileInfo, err := NewFileInfo(data)
-			must(err)
-			fileInfo.GetPeers()
-		}
+		fileInfo := readTorrentFile(os.Args[2])
+		fileInfo.GetPeers()
 	case "handshake":
-
-		fileContent, err := os.ReadFile(os.Args[2])
-		must(err)
-		data, err := decodeBencode(bytes.NewReader(fileContent))
-		must(err)
-		if data, ok := data.(*OrderedMap); ok {
-			fileInfo, err := NewFileInfo(data)
-			must(err)
-			bitTorrent := [19]byte{}
-			copy(bitTorrent[:], []byte("BitTorrent protocol"))
-			info, peerId := [20]byte{}, [20]byte{}
-			copy(info[:], []byte(fileInfo.InfoHash))
-			copy(peerId[:], []byte("00112233445566778899"))
-
-			handshake := Handshake{
-				Length:     19,
-				BitTorrent: bitTorrent,
-				Reserved:   [8]byte{},
-				InfoHash:   info,
-				PeerId:     peerId,
-			}
-			peer := os.Args[3]
-			conn, err := net.Dial("tcp", peer)
-			must(err)
-			defer conn.Close()
-			_, err = conn.Write(packHandShake(&handshake))
-			must(err)
-			buffer := make([]byte, 1024)
-			n, err := conn.Read(buffer)
-			must(err)
-			response := buffer[:n]
-			resp := unpackHandShake(response)
-			fmt.Printf("Peer ID: %x\n", resp.PeerId)
-		}
-
+		fileInfo := readTorrentFile(os.Args[2])
+    resp := sendHandshake(os.Args[3], fileInfo)
+    fmt.Printf("Peer ID: %x\n", resp.PeerId)
 	default:
 		fmt.Println("Unknown command: " + os.Args[1])
-		data := []byte{100, 56, 58, 99, 111, 109, 112, 108, 101, 116, 101, 105, 50, 101, 49, 48, 58, 100, 111, 119, 110, 108, 111, 97, 100, 101, 100, 105, 49, 101, 49, 48, 58, 105, 110, 99, 111, 109, 112, 108, 101, 116, 101, 105, 49, 101, 56, 58, 105, 110, 116, 101, 114, 118, 97, 108, 105, 49, 57, 50, 49, 101, 49, 50, 58, 109, 105, 110, 32, 105, 110, 116, 101, 114, 118, 97, 108, 105, 57, 54, 48, 101, 53, 58, 112, 101, 101, 114, 115, 49, 56, 58, 188, 119, 61, 177, 26, 225, 185, 107, 13, 235, 213, 14, 88, 99, 2, 101, 26, 225, 101}
-		fmt.Println("size", len(data))
-		decoded, err := decodeBencode(bytes.NewReader(data))
-		must(err)
-		if m, ok := decoded.(*OrderedMap); ok {
-			peers, _ := m.Get("peers")
-			fmt.Printf("type %T\n", peers)
-			if peers, ok := peers.(string); ok {
-				for i := 0; i < len(peers); i += 6 {
-					ip, port, _ := parseBytesToIPv4AndPort([]byte(peers[i : i+6]))
-					fmt.Printf("peer %+v\n", peers[i:i+6])
-					fmt.Printf("ip %+v, port %d\n", ip, port)
-				}
-			}
-		}
 		os.Exit(1)
 	}
+}
+
+func readTorrentFile(filename string) *FileInfo {
+	fileContent, err := os.ReadFile(filename)
+	must(err)
+	data, err := decodeBencode(bytes.NewReader(fileContent))
+	must(err)
+	if data, ok := data.(*OrderedMap); ok {
+		fileInfo, err := NewFileInfo(data)
+		must(err)
+		return fileInfo
+	}
+	return nil
+
+}
+
+func sendHandshake(peer string, torrent *FileInfo) *Handshake {
+	bitTorrent := [19]byte{}
+	copy(bitTorrent[:], []byte("BitTorrent protocol"))
+	info, peerId := [20]byte{}, [20]byte{}
+	copy(info[:], []byte(torrent.InfoHash))
+	copy(peerId[:], []byte("00112233445566778899"))
+
+	handshake := Handshake{
+		Length:     19,
+		BitTorrent: bitTorrent,
+		Reserved:   [8]byte{},
+		InfoHash:   info,
+		PeerId:     peerId,
+	}
+	conn, err := net.Dial("tcp", peer)
+	must(err)
+	defer conn.Close()
+	_, err = conn.Write(packHandShake(&handshake))
+	must(err)
+	buffer := make([]byte, 1024)
+	n, err := conn.Read(buffer)
+	must(err)
+	response := buffer[:n]
+	resp := unpackHandShake(response)
+	return resp
 }
 
 func bencode(data any) ([]byte, error) {
