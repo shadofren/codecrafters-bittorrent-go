@@ -216,19 +216,17 @@ func NewTrackerResponse(data *OrderedMap) *TrackerResponse {
 	return &response
 }
 
-// TODO: pipelining the download by sending multiple request at a time
 func DownloadPiece(output string, fileInfo *FileInfo, peerId, pieceId int) {
 	peer := fileInfo.Peers[peerId]
 	conn, err := net.Dial("tcp", peer)
 	must(err)
 	defer conn.Close()
-	// need to send handshake for each download piece
 	_ = SendHandShake(conn, fileInfo)
 	if pieceId >= len(fileInfo.PieceHashes) {
 		fmt.Println("return wrong pieceId")
 		return
 	}
-  fmt.Printf("downloading piece %d with peer %s", pieceId, peer)
+	fmt.Printf("downloading piece %d with peer %s\n", pieceId, peer)
 	// bitfield message
 	_, err = readMessage(conn)
 	must(err)
@@ -248,18 +246,34 @@ func DownloadPiece(output string, fileInfo *FileInfo, peerId, pieceId int) {
 		pieceLength = fileInfo.Length - (numPiece-1)*fileInfo.PieceLength // last piece length
 	}
 
+	// pipelining 5 request at a time
+	pipelines := make(chan struct{}, 5)
+	var wg sync.WaitGroup
+
+	// Start the single worker (anonymous function)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+    for range pipelines {
+			pieceMessage, err := readMessage(conn)
+			must(err)
+			data := pieceMessage.Payload[8:] // skipping the index, begin uint32
+			_, err = file.Write(data)
+			must(err)
+		}
+	}()
+
+	// sender
 	for begin := 0; begin < pieceLength; begin += blockSize {
 		length := uint32(min(pieceLength-begin, blockSize))
 		request := NewRequestMessage(uint32(pieceId), uint32(begin), length)
 		err = writeMessage(conn, request)
 		must(err)
-		pieceMessage, err := readMessage(conn)
-		must(err)
-		data := pieceMessage.Payload[8:] // skipping the index, begin uint32
-		_, err = file.Write(data)
-		must(err)
+    pipelines <- struct{}{}
 	}
-  fmt.Println("done piece", pieceId)
+  close(pipelines)
+  wg.Wait()
+	fmt.Println("done piece", pieceId)
 }
 
 func Download(output string, fileInfo *FileInfo) {
@@ -268,33 +282,33 @@ func Download(output string, fileInfo *FileInfo) {
 	pieceCount := len(fileInfo.PieceHashes)
 	peerCount := len(fileInfo.Peers)
 
-  // this is the job queue
-  jobs := make(chan Job, pieceCount)
-  pieces := make([]string, pieceCount)
+	// this is the job queue
+	jobs := make(chan Job, pieceCount)
+	pieces := make([]string, pieceCount)
 
-  // start the worker
-  for i := 0; i < peerCount; i++ {
-    wg.Add(1)
-    go downloadAsync(fileInfo, i, jobs, &wg)
-  }
+	// start the worker
+	for i := 0; i < peerCount; i++ {
+		wg.Add(1)
+		go downloadAsync(fileInfo, i, jobs, &wg)
+	}
 
 	for i := 0; i < pieceCount; i++ {
 		piece := fmt.Sprintf("%s-piece-%d", output, i)
-    jobs <- Job{ID: i, Output: piece}
-    pieces[i] = piece
+		jobs <- Job{ID: i, Output: piece}
+		pieces[i] = piece
 	}
 
-  // close so that the range loop in worker will exit
-  close(jobs)
+	// close so that the range loop in worker will exit
+	close(jobs)
 	wg.Wait()
 
 	f, err := os.OpenFile(output, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
 	must(err)
 	defer f.Close()
 	for _, piece := range pieces {
-    content, err := os.ReadFile(piece)
-    must(err)
-    f.Write(content)
+		content, err := os.ReadFile(piece)
+		must(err)
+		f.Write(content)
 	}
 
 	elapsedTime := time.Since(startTime)
@@ -302,15 +316,15 @@ func Download(output string, fileInfo *FileInfo) {
 }
 
 type Job struct {
-  ID int
-  Output string
+	ID     int
+	Output string
 }
 
 func downloadAsync(fileInfo *FileInfo, peerId int, jobs <-chan Job, wg *sync.WaitGroup) {
 	defer wg.Done()
-  for job := range jobs {
-    DownloadPiece(job.Output, fileInfo, peerId, job.ID)
-  }
+	for job := range jobs {
+		DownloadPiece(job.Output, fileInfo, peerId, job.ID)
+	}
 }
 
 func VerifyHash(filename string, hash string) {
